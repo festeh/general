@@ -1,3 +1,3 @@
-module github.com/dimaglushkov/general
+module github.com/festeh/general
 
 go 1.24.0
