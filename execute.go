@@ -106,7 +106,7 @@ func (c *Command) executeAndSend(target Target, req ChatCompletionRequest, resul
 func (c *Command) executeWithRetry(target Target, requestBody []byte) (ChatCompletionResponse, error) {
 	var lastErr error
 
-	for attempt := 0; attempt < maxRetries; attempt++ {
+	for attempt := range maxRetries {
 		result, err := c.executeSingleRequest(target, requestBody)
 		if err == nil {
 			return result, nil
