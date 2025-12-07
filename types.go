@@ -82,7 +82,7 @@ type Provider struct {
 // Result wraps a response with provider info and timing.
 type Result struct {
 	Provider string
-	Response *ChatCompletionResponse
+	Response ChatCompletionResponse
 	Error    error
 	Duration time.Duration
 }
