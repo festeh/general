@@ -71,17 +71,21 @@ type ToolParameterProperty struct {
 	Enum        []string `json:"enum,omitempty"`
 }
 
-// Provider represents an LLM endpoint configuration.
+// Provider represents an LLM API endpoint.
 type Provider struct {
-	Name     string
 	Endpoint string
 	APIKey   string
+}
+
+// Target is a specific provider + model combination.
+type Target struct {
+	Provider Provider
 	Model    string
 }
 
-// Result wraps a response with provider info and timing.
+// Result wraps a response with target info and timing.
 type Result struct {
-	Provider string
+	Target   Target
 	Response ChatCompletionResponse
 	Error    error
 	Duration time.Duration

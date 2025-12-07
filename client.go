@@ -10,23 +10,23 @@ const defaultTimeout = 60 * time.Second
 
 // Command manages LLM API requests.
 type Command struct {
-	providers []Provider
-	client    *http.Client
-	logger    *slog.Logger
+	targets []Target
+	client  *http.Client
+	logger  *slog.Logger
 }
 
-// NewCommand creates a new Command with the given providers and optional logger.
+// NewCommand creates a new Command with the given targets and optional logger.
 // Pass nil for logger to disable logging.
-func NewCommand(providers []Provider, logger *slog.Logger) *Command {
-	return NewCommandWithTimeout(providers, logger, defaultTimeout)
+func NewCommand(targets []Target, logger *slog.Logger) *Command {
+	return NewCommandWithTimeout(targets, logger, defaultTimeout)
 }
 
 // NewCommandWithTimeout creates a new Command with a custom timeout.
-func NewCommandWithTimeout(providers []Provider, logger *slog.Logger, timeout time.Duration) *Command {
+func NewCommandWithTimeout(targets []Target, logger *slog.Logger, timeout time.Duration) *Command {
 	return &Command{
-		providers: providers,
-		client:    &http.Client{Timeout: timeout},
-		logger:    logger,
+		targets: targets,
+		client:  &http.Client{Timeout: timeout},
+		logger:  logger,
 	}
 }
 

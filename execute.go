@@ -18,46 +18,46 @@ const (
 	baseDelay  = time.Second
 )
 
-// Execute fires parallel requests to all configured providers.
-// Results are streamed into the returned channel as each provider responds.
-// The channel is closed when all providers have responded.
+// Execute fires parallel requests to all configured targets.
+// Results are streamed into the returned channel as each target responds.
+// The channel is closed when all targets have responded.
 func (c *Command) Execute(req ChatCompletionRequest) <-chan Result {
-	results := make(chan Result, len(c.providers))
+	results := make(chan Result, len(c.targets))
 
 	c.log(slog.LevelDebug, "starting parallel requests",
-		"providers", len(c.providers),
+		"targets", len(c.targets),
 	)
 
 	var wg sync.WaitGroup
-	for _, provider := range c.providers {
+	for _, target := range c.targets {
 		wg.Add(1)
-		go func(p Provider) {
+		go func(t Target) {
 			defer wg.Done()
-			c.executeAndSend(p, req, results)
-		}(provider)
+			c.executeAndSend(t, req, results)
+		}(target)
 	}
 
 	go func() {
 		wg.Wait()
 		close(results)
-		c.log(slog.LevelDebug, "all providers completed")
+		c.log(slog.LevelDebug, "all targets completed")
 	}()
 
 	return results
 }
 
-// ExecuteOne sends a request to the first configured provider and blocks until complete.
+// ExecuteOne sends a request to the first configured target and blocks until complete.
 // Useful for simple cases and debugging.
 func (c *Command) ExecuteOne(req ChatCompletionRequest) (ChatCompletionResponse, error) {
-	if len(c.providers) == 0 {
-		return ChatCompletionResponse{}, fmt.Errorf("no providers configured")
+	if len(c.targets) == 0 {
+		return ChatCompletionResponse{}, fmt.Errorf("no targets configured")
 	}
-	return c.executeProvider(c.providers[0], req)
+	return c.executeTarget(c.targets[0], req)
 }
 
-// executeProvider sends a request to a specific provider.
-func (c *Command) executeProvider(provider Provider, req ChatCompletionRequest) (ChatCompletionResponse, error) {
-	req.Model = provider.Model
+// executeTarget sends a request to a specific target.
+func (c *Command) executeTarget(target Target, req ChatCompletionRequest) (ChatCompletionResponse, error) {
+	req.Model = target.Model
 
 	requestBody, err := json.Marshal(req)
 	if err != nil {
@@ -65,22 +65,21 @@ func (c *Command) executeProvider(provider Provider, req ChatCompletionRequest) 
 	}
 
 	c.log(slog.LevelDebug, "sending request",
-		"provider", provider.Name,
-		"endpoint", provider.Endpoint,
-		"model", provider.Model,
+		"endpoint", target.Provider.Endpoint,
+		"model", target.Model,
 	)
 
-	return c.executeWithRetry(provider, requestBody)
+	return c.executeWithRetry(target, requestBody)
 }
 
-func (c *Command) executeAndSend(provider Provider, req ChatCompletionRequest, results chan<- Result) {
+func (c *Command) executeAndSend(target Target, req ChatCompletionRequest, results chan<- Result) {
 	start := time.Now()
 
-	resp, err := c.executeProvider(provider, req)
+	resp, err := c.executeTarget(target, req)
 	duration := time.Since(start)
 
 	result := Result{
-		Provider: provider.Name,
+		Target:   target,
 		Response: resp,
 		Error:    err,
 		Duration: duration,
@@ -89,31 +88,34 @@ func (c *Command) executeAndSend(provider Provider, req ChatCompletionRequest, r
 	results <- result
 
 	if err != nil {
-		c.log(slog.LevelWarn, "provider failed",
-			"provider", provider.Name,
+		c.log(slog.LevelWarn, "target failed",
+			"endpoint", target.Provider.Endpoint,
+			"model", target.Model,
 			"duration", duration,
 			"error", err.Error(),
 		)
 	} else {
-		c.log(slog.LevelDebug, "provider responded",
-			"provider", provider.Name,
+		c.log(slog.LevelDebug, "target responded",
+			"endpoint", target.Provider.Endpoint,
+			"model", target.Model,
 			"duration", duration,
 		)
 	}
 }
 
-func (c *Command) executeWithRetry(provider Provider, requestBody []byte) (ChatCompletionResponse, error) {
+func (c *Command) executeWithRetry(target Target, requestBody []byte) (ChatCompletionResponse, error) {
 	var lastErr error
 
 	for attempt := 0; attempt < maxRetries; attempt++ {
-		result, err := c.executeSingleRequest(provider, requestBody)
+		result, err := c.executeSingleRequest(target, requestBody)
 		if err == nil {
 			return result, nil
 		}
 
 		lastErr = err
 		c.log(slog.LevelWarn, "request attempt failed",
-			"provider", provider.Name,
+			"endpoint", target.Provider.Endpoint,
+			"model", target.Model,
 			"attempt", attempt+1,
 			"error", err.Error(),
 		)
@@ -129,17 +131,17 @@ func (c *Command) executeWithRetry(provider Provider, requestBody []byte) (ChatC
 		time.Sleep(time.Duration(1<<uint(attempt)) * baseDelay)
 	}
 
-	return ChatCompletionResponse{}, fmt.Errorf("request to %s failed after %d attempts: %w", provider.Name, maxRetries, lastErr)
+	return ChatCompletionResponse{}, fmt.Errorf("request to %s/%s failed after %d attempts: %w", target.Provider.Endpoint, target.Model, maxRetries, lastErr)
 }
 
-func (c *Command) executeSingleRequest(provider Provider, requestBody []byte) (ChatCompletionResponse, error) {
-	httpReq, err := http.NewRequestWithContext(context.Background(), "POST", provider.Endpoint, bytes.NewBuffer(requestBody))
+func (c *Command) executeSingleRequest(target Target, requestBody []byte) (ChatCompletionResponse, error) {
+	httpReq, err := http.NewRequestWithContext(context.Background(), "POST", target.Provider.Endpoint, bytes.NewBuffer(requestBody))
 	if err != nil {
 		return ChatCompletionResponse{}, fmt.Errorf("failed to create request: %w", err)
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+provider.APIKey)
+	httpReq.Header.Set("Authorization", "Bearer "+target.Provider.APIKey)
 
 	httpResp, err := c.client.Do(httpReq)
 	if err != nil {
@@ -165,7 +167,8 @@ func (c *Command) executeSingleRequest(provider Provider, requestBody []byte) (C
 	}
 
 	c.log(slog.LevelDebug, "request successful",
-		"provider", provider.Name,
+		"endpoint", target.Provider.Endpoint,
+		"model", target.Model,
 		"choices", len(response.Choices),
 	)
 
