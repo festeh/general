@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -17,10 +18,45 @@ const (
 	baseDelay  = time.Second
 )
 
-// Execute sends a chat completion request to a single provider.
-// Returns the response or an error after retries are exhausted.
-func (c *Command) Execute(ctx context.Context, provider Provider, req ChatCompletionRequest) (ChatCompletionResponse, error) {
-	// Override model with provider's model
+// Execute fires parallel requests to all configured providers.
+// Results are streamed into the returned channel as each provider responds.
+// The channel is closed when all providers have responded.
+func (c *Command) Execute(ctx context.Context, req ChatCompletionRequest) <-chan Result {
+	results := make(chan Result, len(c.providers))
+
+	c.log(slog.LevelDebug, "starting parallel requests",
+		"providers", len(c.providers),
+	)
+
+	var wg sync.WaitGroup
+	for _, provider := range c.providers {
+		wg.Add(1)
+		go func(p Provider) {
+			defer wg.Done()
+			c.executeAndSend(ctx, p, req, results)
+		}(provider)
+	}
+
+	go func() {
+		wg.Wait()
+		close(results)
+		c.log(slog.LevelDebug, "all providers completed")
+	}()
+
+	return results
+}
+
+// ExecuteOne sends a request to the first configured provider and blocks until complete.
+// Useful for simple cases and debugging.
+func (c *Command) ExecuteOne(ctx context.Context, req ChatCompletionRequest) (ChatCompletionResponse, error) {
+	if len(c.providers) == 0 {
+		return ChatCompletionResponse{}, fmt.Errorf("no providers configured")
+	}
+	return c.executeProvider(ctx, c.providers[0], req)
+}
+
+// executeProvider sends a request to a specific provider.
+func (c *Command) executeProvider(ctx context.Context, provider Provider, req ChatCompletionRequest) (ChatCompletionResponse, error) {
 	req.Model = provider.Model
 
 	requestBody, err := json.Marshal(req)
@@ -35,6 +71,40 @@ func (c *Command) Execute(ctx context.Context, provider Provider, req ChatComple
 	)
 
 	return c.executeWithRetry(ctx, provider, requestBody)
+}
+
+func (c *Command) executeAndSend(ctx context.Context, provider Provider, req ChatCompletionRequest, results chan<- Result) {
+	start := time.Now()
+
+	resp, err := c.executeProvider(ctx, provider, req)
+	duration := time.Since(start)
+
+	result := Result{
+		Provider: provider.Name,
+		Response: resp,
+		Error:    err,
+		Duration: duration,
+	}
+
+	select {
+	case results <- result:
+		if err != nil {
+			c.log(slog.LevelWarn, "provider failed",
+				"provider", provider.Name,
+				"duration", duration,
+				"error", err.Error(),
+			)
+		} else {
+			c.log(slog.LevelDebug, "provider responded",
+				"provider", provider.Name,
+				"duration", duration,
+			)
+		}
+	case <-ctx.Done():
+		c.log(slog.LevelDebug, "context cancelled, dropping result",
+			"provider", provider.Name,
+		)
+	}
 }
 
 func (c *Command) executeWithRetry(ctx context.Context, provider Provider, requestBody []byte) (ChatCompletionResponse, error) {
@@ -112,12 +182,10 @@ func (c *Command) executeSingleRequest(ctx context.Context, provider Provider, r
 func shouldRetry(err error) bool {
 	errStr := err.Error()
 
-	// Retry on network errors
 	if strings.Contains(errStr, "HTTP request failed") {
 		return true
 	}
 
-	// Retry on server errors (5xx), but not client errors (4xx)
 	if strings.Contains(errStr, "API request failed with status") {
 		if strings.Contains(errStr, "status 5") {
 			return true
@@ -125,7 +193,6 @@ func shouldRetry(err error) bool {
 		return false
 	}
 
-	// Retry on decode errors (could be temporary network issues)
 	if strings.Contains(errStr, "failed to decode response") {
 		return true
 	}
