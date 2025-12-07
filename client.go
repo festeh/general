@@ -1,6 +1,7 @@
 package general
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 	"time"
@@ -33,6 +34,6 @@ func NewCommandWithTimeout(targets []Target, logger *slog.Logger, timeout time.D
 // log logs a message if logger is configured.
 func (c *Command) log(level slog.Level, msg string, args ...any) {
 	if c.logger != nil {
-		c.logger.Log(nil, level, msg, args...)
+		c.logger.Log(context.Background(), level, msg, args...)
 	}
 }
