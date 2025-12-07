@@ -17,9 +17,9 @@ const (
 	baseDelay  = time.Second
 )
 
-// Complete sends a chat completion request to a single provider.
+// Execute sends a chat completion request to a single provider.
 // Returns the response or an error after retries are exhausted.
-func (c *Client) Complete(ctx context.Context, provider Provider, req ChatCompletionRequest) (ChatCompletionResponse, error) {
+func (c *Command) Execute(ctx context.Context, provider Provider, req ChatCompletionRequest) (ChatCompletionResponse, error) {
 	// Override model with provider's model
 	req.Model = provider.Model
 
@@ -37,7 +37,7 @@ func (c *Client) Complete(ctx context.Context, provider Provider, req ChatComple
 	return c.executeWithRetry(ctx, provider, requestBody)
 }
 
-func (c *Client) executeWithRetry(ctx context.Context, provider Provider, requestBody []byte) (ChatCompletionResponse, error) {
+func (c *Command) executeWithRetry(ctx context.Context, provider Provider, requestBody []byte) (ChatCompletionResponse, error) {
 	var lastErr error
 
 	for attempt := 0; attempt < maxRetries; attempt++ {
@@ -69,7 +69,7 @@ func (c *Client) executeWithRetry(ctx context.Context, provider Provider, reques
 	return ChatCompletionResponse{}, fmt.Errorf("request to %s failed after %d attempts: %w", provider.Name, maxRetries, lastErr)
 }
 
-func (c *Client) executeSingleRequest(ctx context.Context, provider Provider, requestBody []byte) (ChatCompletionResponse, error) {
+func (c *Command) executeSingleRequest(ctx context.Context, provider Provider, requestBody []byte) (ChatCompletionResponse, error) {
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", provider.Endpoint, bytes.NewBuffer(requestBody))
 	if err != nil {
 		return ChatCompletionResponse{}, fmt.Errorf("failed to create request: %w", err)
@@ -133,7 +133,7 @@ func shouldRetry(err error) bool {
 	return false
 }
 
-func (c *Client) waitForRetry(ctx context.Context, attempt int) error {
+func (c *Command) waitForRetry(ctx context.Context, attempt int) error {
 	delay := time.Duration(1<<uint(attempt)) * baseDelay
 
 	select {

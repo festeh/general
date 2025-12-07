@@ -7,10 +7,10 @@ import (
 	"time"
 )
 
-// CompleteAll fires parallel requests to all configured providers.
+// Broadcast fires parallel requests to all configured providers.
 // Results are streamed into the returned channel as each provider responds.
 // The channel is closed when all providers have responded.
-func (c *Client) CompleteAll(ctx context.Context, req ChatCompletionRequest) <-chan Result {
+func (c *Command) Broadcast(ctx context.Context, req ChatCompletionRequest) <-chan Result {
 	results := make(chan Result, len(c.providers))
 
 	c.log(slog.LevelDebug, "starting parallel requests",
@@ -22,7 +22,7 @@ func (c *Client) CompleteAll(ctx context.Context, req ChatCompletionRequest) <-c
 		wg.Add(1)
 		go func(p Provider) {
 			defer wg.Done()
-			c.completeAndSend(ctx, p, req, results)
+			c.executeAndSend(ctx, p, req, results)
 		}(provider)
 	}
 
@@ -35,10 +35,10 @@ func (c *Client) CompleteAll(ctx context.Context, req ChatCompletionRequest) <-c
 	return results
 }
 
-func (c *Client) completeAndSend(ctx context.Context, provider Provider, req ChatCompletionRequest, results chan<- Result) {
+func (c *Command) executeAndSend(ctx context.Context, provider Provider, req ChatCompletionRequest, results chan<- Result) {
 	start := time.Now()
 
-	resp, err := c.Complete(ctx, provider, req)
+	resp, err := c.Execute(ctx, provider, req)
 	duration := time.Since(start)
 
 	result := Result{
