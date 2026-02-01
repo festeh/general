@@ -142,6 +142,9 @@ func (c *Command) executeSingleRequest(target Target, requestBody []byte) (ChatC
 
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+target.Provider.APIKey)
+	for k, v := range target.Provider.Headers {
+		httpReq.Header.Set(k, v)
+	}
 
 	httpResp, err := c.client.Do(httpReq)
 	if err != nil {

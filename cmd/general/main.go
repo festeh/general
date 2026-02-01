@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -25,28 +26,32 @@ func (t *targetFlag) Set(value string) error {
 var providerConstructors = map[string]func(string) general.Provider{
 	"openrouter": general.OpenRouter,
 	"groq":       general.Groq,
-	"chutes":     general.Chutes,
+	"kimi":     general.Kimi,
 	"gemini":     general.Gemini,
 }
 
 var envVarNames = map[string]string{
 	"openrouter": "OPENROUTER_API_KEY",
 	"groq":       "GROQ_API_KEY",
-	"chutes":     "CHUTES_API_KEY",
+	"kimi":     "KIMI_API_KEY",
 	"gemini":     "GEMINI_API_KEY",
 }
 
 func main() {
 	var targets targetFlag
+	var jsonMode bool
+	var rawOutput bool
 	flag.Var(&targets, "target", "Target in format provider:model (can be repeated)")
 	flag.Var(&targets, "t", "Target in format provider:model (shorthand)")
+	flag.BoolVar(&jsonMode, "json", false, "Read ChatCompletionRequest JSON from stdin")
+	flag.BoolVar(&rawOutput, "raw", false, "Output full response JSON instead of just content")
 	flag.Parse()
 
 	if len(targets) == 0 {
 		fmt.Fprintln(os.Stderr, "Error: at least one --target (-t) required")
 		fmt.Fprintln(os.Stderr, "Usage: general -t provider:model [-t provider:model ...] [prompt]")
-		fmt.Fprintln(os.Stderr, "Providers: openrouter, groq, chutes, gemini")
-		fmt.Fprintln(os.Stderr, "API keys from env: OPENROUTER_API_KEY, GROQ_API_KEY, CHUTES_API_KEY, GEMINI_API_KEY")
+		fmt.Fprintln(os.Stderr, "Providers: openrouter, groq, kimi, gemini")
+		fmt.Fprintln(os.Stderr, "API keys from env: OPENROUTER_API_KEY, GROQ_API_KEY, KIMI_API_KEY, GEMINI_API_KEY")
 		os.Exit(1)
 	}
 
@@ -65,7 +70,7 @@ func main() {
 		constructor, ok := providerConstructors[providerName]
 		if !ok {
 			fmt.Fprintf(os.Stderr, "Error: unknown provider %q\n", providerName)
-			fmt.Fprintln(os.Stderr, "Available: openrouter, groq, chutes, gemini")
+			fmt.Fprintln(os.Stderr, "Available: openrouter, groq, kimi, gemini")
 			os.Exit(1)
 		}
 
@@ -83,32 +88,48 @@ func main() {
 		})
 	}
 
-	// Get prompt from args or stdin
-	var prompt string
-	if flag.NArg() > 0 {
-		prompt = strings.Join(flag.Args(), " ")
-	} else {
-		fmt.Fprintln(os.Stderr, "Enter prompt (Ctrl+D to send):")
-		scanner := bufio.NewScanner(os.Stdin)
-		var lines []string
-		for scanner.Scan() {
-			lines = append(lines, scanner.Text())
-		}
-		prompt = strings.Join(lines, "\n")
-	}
+	// Build request
+	var req general.ChatCompletionRequest
 
-	if strings.TrimSpace(prompt) == "" {
-		fmt.Fprintln(os.Stderr, "Error: empty prompt")
-		os.Exit(1)
+	if jsonMode {
+		// JSON mode: read ChatCompletionRequest from stdin
+		if err := json.NewDecoder(os.Stdin).Decode(&req); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: invalid JSON: %v\n", err)
+			os.Exit(1)
+		}
+		if len(req.Messages) == 0 {
+			fmt.Fprintln(os.Stderr, "Error: messages array required")
+			os.Exit(1)
+		}
+	} else {
+		// Text mode: prompt from args or interactive stdin
+		var prompt string
+		if flag.NArg() > 0 {
+			prompt = strings.Join(flag.Args(), " ")
+		} else {
+			fmt.Fprintln(os.Stderr, "Enter prompt (Ctrl+D to send):")
+			scanner := bufio.NewScanner(os.Stdin)
+			var lines []string
+			for scanner.Scan() {
+				lines = append(lines, scanner.Text())
+			}
+			prompt = strings.Join(lines, "\n")
+		}
+
+		if strings.TrimSpace(prompt) == "" {
+			fmt.Fprintln(os.Stderr, "Error: empty prompt")
+			os.Exit(1)
+		}
+
+		req = general.ChatCompletionRequest{
+			Messages: []general.ChatCompletionMessage{
+				{Role: "user", Content: prompt},
+			},
+		}
 	}
 
 	// Execute
 	cmd := general.NewCommand(generalTargets, nil)
-	req := general.ChatCompletionRequest{
-		Messages: []general.ChatCompletionMessage{
-			{Role: "user", Content: prompt},
-		},
-	}
 
 	startTime := time.Now()
 	fmt.Fprintf(os.Stderr, "[%s] Sending to %d target(s)...\n", startTime.Format("15:04:05.000"), len(generalTargets))
@@ -129,17 +150,27 @@ func main() {
 			continue
 		}
 
-		content := ""
-		if len(result.Response.Choices) > 0 {
-			content = result.Response.Choices[0].Message.Content
+		if rawOutput {
+			// Output full response as JSON
+			respJSON, _ := json.MarshalIndent(result.Response, "", "  ")
+			fmt.Printf("\n[%s] [%s] ✓ %s/%s:\n%s\n",
+				timestamp, elapsed,
+				providerNameFromEndpoint(result.Target.Provider.Endpoint),
+				result.Target.Model,
+				string(respJSON),
+			)
+		} else {
+			content := ""
+			if len(result.Response.Choices) > 0 {
+				content = result.Response.Choices[0].Message.Content
+			}
+			fmt.Printf("\n[%s] [%s] ✓ %s/%s:\n%s\n",
+				timestamp, elapsed,
+				providerNameFromEndpoint(result.Target.Provider.Endpoint),
+				result.Target.Model,
+				content,
+			)
 		}
-
-		fmt.Printf("\n[%s] [%s] ✓ %s/%s:\n%s\n",
-			timestamp, elapsed,
-			providerNameFromEndpoint(result.Target.Provider.Endpoint),
-			result.Target.Model,
-			content,
-		)
 	}
 
 	fmt.Fprintf(os.Stderr, "\n[%s] Done (total: %s)\n",
@@ -154,8 +185,8 @@ func providerNameFromEndpoint(endpoint string) string {
 		return "openrouter"
 	case strings.Contains(endpoint, "groq"):
 		return "groq"
-	case strings.Contains(endpoint, "chutes"):
-		return "chutes"
+	case strings.Contains(endpoint, "kimi"):
+		return "kimi"
 	case strings.Contains(endpoint, "generativelanguage.googleapis"):
 		return "gemini"
 	default:

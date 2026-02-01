@@ -75,6 +75,7 @@ type ToolParameterProperty struct {
 type Provider struct {
 	Endpoint string
 	APIKey   string
+	Headers  map[string]string
 }
 
 // Target is a specific provider + model combination.
