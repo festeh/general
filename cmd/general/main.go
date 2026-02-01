@@ -123,7 +123,7 @@ func main() {
 
 		req = general.ChatCompletionRequest{
 			Messages: []general.ChatCompletionMessage{
-				{Role: "user", Content: prompt},
+				{Role: "user", Content: general.TextContent(prompt)},
 			},
 		}
 	}
@@ -162,7 +162,7 @@ func main() {
 		} else {
 			content := ""
 			if len(result.Response.Choices) > 0 {
-				content = result.Response.Choices[0].Message.Content
+				content = result.Response.Choices[0].Message.Content.String()
 			}
 			fmt.Printf("\n[%s] [%s] ✓ %s/%s:\n%s\n",
 				timestamp, elapsed,

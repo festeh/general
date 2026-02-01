@@ -24,9 +24,14 @@ func NewCommand(targets []Target, logger *slog.Logger) *Command {
 
 // NewCommandWithTimeout creates a new Command with a custom timeout.
 func NewCommandWithTimeout(targets []Target, logger *slog.Logger, timeout time.Duration) *Command {
+	transport := &http.Transport{
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 10,
+		MaxConnsPerHost:     10,
+	}
 	return &Command{
 		targets: targets,
-		client:  &http.Client{Timeout: timeout},
+		client:  &http.Client{Timeout: timeout, Transport: transport},
 		logger:  logger,
 	}
 }
